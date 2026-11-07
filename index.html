@@ -116,7 +116,7 @@
     </div>
 
     <!-- OVERLAY LOADING LOGIN -->
-    <div x-show="isLoggingIn" x-cloak
+    <div x-show="isLoggingIn || isBusy" x-cloak
          x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
          class="fixed inset-0 z-[60] bg-blue-950/70 backdrop-blur-sm flex items-center justify-center p-4 no-print" role="status" aria-live="polite">
         <div class="bg-white rounded-2xl shadow-2xl px-8 py-7 w-full max-w-xs text-center space-y-4">
@@ -527,7 +527,7 @@
                             </div>
                             <div>
                                 <label class="block text-xs font-semibold text-slate-600 mb-1">Cari Mata Pelajaran / Guru</label>
-                                <input type="text" x-model="searchQuery" placeholder="Cari..." class="w-full text-xs px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">
+                                <input type="text" x-model.debounce.350ms="searchQuery" placeholder="Cari..." class="w-full text-xs px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 bg-white">
                             </div>
                         </div>
 
@@ -549,13 +549,13 @@
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-200">
-                                    <template x-for="(j, index) in recapRows" :key="j.id">
+                                    <template x-for="(j, index) in recapPageRows" :key="j.id">
                                         <tr class="hover:bg-slate-50 transition" :style="j.is_fakultatif ? 'background-color:#fef08a' : ''">
                                             <template x-if="j.is_fakultatif">
                                                 <td colspan="11" class="p-3">
                                                     <div class="flex items-center justify-between gap-3">
                                                         <div class="flex items-center gap-3">
-                                                            <span class="font-semibold text-slate-500" x-text="index + 1"></span>
+                                                            <span class="font-semibold text-slate-500" x-text="recapOffset + index + 1"></span>
                                                             <i class="fa-solid fa-flag text-red-600 text-lg"></i>
                                                             <div>
                                                                 <div class="font-extrabold text-yellow-900 uppercase tracking-wide">Hari Fakultatif (Libur KBM &mdash; Semua Kelas)</div>
@@ -570,7 +570,7 @@
                                                     </div>
                                                 </td>
                                             </template>
-                                            <td x-show="!j.is_fakultatif" class="p-3 font-semibold text-slate-500" x-text="index + 1"></td>
+                                            <td x-show="!j.is_fakultatif" class="p-3 font-semibold text-slate-500" x-text="recapOffset + index + 1"></td>
                                             <td x-show="!j.is_fakultatif" class="p-3 whitespace-nowrap">
                                                 <div class="font-bold text-slate-800" x-text="j.day"></div>
                                                 <div class="text-slate-500 text-[11px]" x-text="j.date"></div>
@@ -612,6 +612,26 @@
                                     </template>
                                 </tbody>
                             </table>
+                        </div>
+
+                        <!-- Paginasi rekap -->
+                        <div class="flex flex-wrap items-center justify-between gap-3 pt-1 no-print" x-show="recapRows.length > 0">
+                            <p class="text-xs text-slate-500">
+                                Menampilkan <b class="text-slate-700" x-text="recapOffset + 1"></b>&ndash;<b class="text-slate-700" x-text="Math.min(recapOffset + recapPageSize, recapRows.length)"></b>
+                                dari <b class="text-slate-700" x-text="recapRows.length"></b> baris
+                            </p>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <label class="text-xs text-slate-500 flex items-center gap-1.5">Baris/halaman
+                                    <select x-model.number="recapPageSize" @change="recapPage = 1" class="text-xs px-2 py-1.5 border rounded-lg bg-white">
+                                        <option value="25">25</option><option value="50">50</option><option value="100">100</option><option value="200">200</option>
+                                    </select>
+                                </label>
+                                <button type="button" @click="recapGoto(1)" :disabled="recapPageSafe <= 1" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-xs font-bold" title="Halaman pertama"><i class="fa-solid fa-angles-left"></i></button>
+                                <button type="button" @click="recapGoto(recapPageSafe - 1)" :disabled="recapPageSafe <= 1" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-xs font-bold"><i class="fa-solid fa-chevron-left"></i> Sebelumnya</button>
+                                <span class="text-xs font-bold text-slate-700 px-1">Hal. <span x-text="recapPageSafe"></span> / <span x-text="recapTotalPages"></span></span>
+                                <button type="button" @click="recapGoto(recapPageSafe + 1)" :disabled="recapPageSafe >= recapTotalPages" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-xs font-bold">Berikutnya <i class="fa-solid fa-chevron-right"></i></button>
+                                <button type="button" @click="recapGoto(recapTotalPages)" :disabled="recapPageSafe >= recapTotalPages" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-xs font-bold" title="Halaman terakhir"><i class="fa-solid fa-angles-right"></i></button>
+                            </div>
                         </div>
                     </div>
                 </template>
@@ -1994,6 +2014,9 @@
             .finally(() => clearTimeout(timer));
         }
 
+        // Cache hasil rekap (di luar state Alpine agar tidak ikut dipantau/di-proxy -> jauh lebih cepat)
+        const __recapMemo = { key: '', j: null, f: null, rows: [] };
+
         const DB_PK = { classes: 'name', subjects: 'name', teachers: 'id', students: 'id', facultative_days: 'id', journals: 'id' };
 
         function jurnalApp() {
@@ -2013,6 +2036,10 @@
                 _syncChain: Promise.resolve(),
                 _pending: 0,
                 _ver: 0,
+                dataRev: 0,          // naik setiap data jurnal disimpan -> cache rekap diperbarui
+                isBusy: false,       // overlay untuk proses berat (ekspor)
+                recapPage: 1,
+                recapPageSize: 50,
                 _loading: false,
                 _lastLoad: 0,
                 _lastId: 0,
@@ -2155,11 +2182,16 @@
                         }
                     });
 
-                    this.$watch('journals', () => {
+                    // Dulu memakai pengawasan 'deep' (mengubah SELURUH jurnal menjadi teks setiap ada perubahan -> berat).
+                    // Kini cukup memantau tanda ringan: jumlah jurnal + nomor revisi data.
+                    this.$watch('journalSig', () => {
                         if (this.currentUser?.role === 'admin' && this.activeTab === 'dashboard') {
                             this.$nextTick(() => this.renderCharts());
                         }
-                    }, { deep: true });
+                    });
+
+                    // Ganti filter -> kembali ke halaman 1
+                    this.$watch('recapFilterSig', () => { this.recapPage = 1; });
 
                     await this.restoreSession();
 
@@ -2287,6 +2319,7 @@
                             return;
                         }
 
+                        this.dataRev++;
                         this.journals = d.journals;
                         this.teachers = d.teachers.map(r => ({ id: r.id, nip: r.nip || '', name: r.name, subjects: r.subjects || [], subjectClasses: r.subject_classes || {} }));
                         if (admin) this.students = d.students;
@@ -2360,6 +2393,7 @@
 
                 // Nama dipertahankan agar seluruh pemanggil lama tetap bekerja; kini menyimpan ke Google Spreadsheet
                 saveToStorage() {
+                    this.dataRev++;
                     this.syncToServer();
                 },
 
@@ -3175,15 +3209,35 @@
                 },
 
                 // Rekap = jurnal terfilter + baris Hari Fakultatif (libur KBM semua kelas) dalam rentang tanggal yang sama
+                get journalSig() { return this.journals.length + ':' + this.dataRev; },
+                get recapFilterSig() {
+                    return [this.filterDateFrom, this.filterDateTo, this.filterClass, this.filterTeacher, this.searchQuery].join('|');
+                },
+
+                // Rekap = jurnal terfilter + baris Hari Fakultatif (libur KBM semua kelas) dalam rentang tanggal yang sama
+                // Hasil di-cache: getter ini dipanggil berkali-kali saat render, jadi tidak boleh menghitung ulang tiap kali.
                 get recapRows() {
+                    const rawJ = Alpine.raw(this.journals), rawF = Alpine.raw(this.facultativeDays);
+                    const key = this.recapFilterSig + '|' + rawJ.length + '|' + rawF.length + '|' + this.dataRev;
+                    if (__recapMemo.key === key && __recapMemo.j === rawJ && __recapMemo.f === rawF) return __recapMemo.rows;
+
                     let fak = [];
                     if (!this.filterTeacher && !this.searchQuery) {
                         fak = this.facultativeDays.filter(f =>
                             (!this.filterDateFrom || f.date >= this.filterDateFrom) &&
                             (!this.filterDateTo || f.date <= this.filterDateTo));
                     }
-                    return this.mergeRecapRows(this.filteredJournals, fak);
+                    const rows = this.mergeRecapRows(this.filteredJournals, fak);
+                    __recapMemo.key = key; __recapMemo.j = rawJ; __recapMemo.f = rawF; __recapMemo.rows = rows;
+                    return rows;
                 },
+
+                // Paginasi tabel rekap: hanya baris pada halaman aktif yang digambar di layar
+                get recapTotalPages() { return Math.max(1, Math.ceil(this.recapRows.length / this.recapPageSize)); },
+                get recapPageSafe() { return Math.min(Math.max(1, Number(this.recapPage) || 1), this.recapTotalPages); },
+                get recapOffset() { return (this.recapPageSafe - 1) * this.recapPageSize; },
+                get recapPageRows() { return this.recapRows.slice(this.recapOffset, this.recapOffset + this.recapPageSize); },
+                recapGoto(p) { this.recapPage = Math.min(Math.max(1, p), this.recapTotalPages); },
 
                 mergeRecapRows(journalList, facList) {
                     const facRows = facList.map(f => ({
@@ -3577,7 +3631,12 @@
                         return false;
                     }
 
+                    this.isBusy = true;
+                    this.loadingText = 'Menyiapkan file Excel...';
+                    await new Promise(r => setTimeout(r, 60)); // beri waktu browser menampilkan overlay
                     try {
+                        // salinan polos (tanpa proxy Alpine) -> baca data jauh lebih cepat
+                        const plainList = JSON.parse(JSON.stringify(sourceList));
                         const NCOL = 10;
                         const wb = new ExcelJS.Workbook();
                         wb.creator = 'SMP Negeri 36 Samarinda';
@@ -3678,7 +3737,14 @@
                         };
                         const lines = (txt, w) => String(txt || '').split('\n').reduce((n, s) => n + Math.max(1, Math.ceil(s.length / (w * 0.95))), 0);
 
-                        sourceList.forEach((j, idx) => {
+                        const BOX_DATA = box('FFCBD5E1');
+                        for (let idx = 0; idx < plainList.length; idx++) {
+                            const j = plainList[idx];
+                            // Setiap 150 baris, serahkan kendali ke browser agar halaman tetap responsif
+                            if (idx % 150 === 0) {
+                                this.loadingText = 'Menyiapkan file Excel... ' + Math.round(idx / plainList.length * 100) + '%';
+                                await new Promise(r => setTimeout(r, 0));
+                            }
                             if (j.is_fakultatif) {
                                 const r = ws.addRow([]);
                                 const n = r.number;
@@ -3693,7 +3759,7 @@
                                     cell.border = box('FF94A3B8');
                                 }
                                 r.height = 24;
-                                return;
+                                continue;
                             }
 
                             const presence = this.normalizePresence(j.teacher_presence);
@@ -3715,7 +3781,7 @@
                             for (let k = 1; k <= NCOL; k++) {
                                 const cell = r.getCell(k);
                                 cell.font = base;
-                                cell.border = box('FFCBD5E1');
+                                cell.border = BOX_DATA;
                                 cell.alignment = { vertical: 'middle', wrapText: true, horizontal: [1, 3, 4, 7, 9].includes(k) ? 'center' : 'left' };
                             }
                             r.getCell(1).font = { ...base, bold: true, color: { argb: 'FF64748B' } };
@@ -3732,9 +3798,9 @@
 
                             const n = Math.max(2, lines(j.subject, widths[4]), lines(j.teacher, widths[5]), lines(j.topic, widths[7]), lines(presence, widths[6]), lines(j.student_name, widths[9]));
                             r.height = n * 13.5 + 6;
-                        });
+                        }
 
-                        if (sourceList.length === 0) {
+                        if (plainList.length === 0) {
                             const r = ws.addRow([]);
                             ws.mergeCells(r.number, 1, r.number, NCOL);
                             const c = ws.getCell(r.number, 1);
@@ -3746,6 +3812,8 @@
 
                         // ---------- UNDUH ----------
                         const fileName = byMonth ? `Rekap_Jurnal_SMPN36_${monthKey}.xlsx` : `Rekap_Jurnal_SMPN36_${new Date().toISOString().slice(0, 10)}.xlsx`;
+                        this.loadingText = 'Menyusun file Excel...';
+                        await new Promise(r => setTimeout(r, 0));
                         const buf = await wb.xlsx.writeBuffer();
                         const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
                         const url = URL.createObjectURL(blob);
@@ -3760,6 +3828,8 @@
                         console.error('exportExcel', err);
                         this.addToast('Gagal membuat file Excel: ' + (err && err.message ? err.message : err), 'error');
                         return false;
+                    } finally {
+                        this.isBusy = false;
                     }
                 },
 
